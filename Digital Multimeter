@@ -1,0 +1,158 @@
+import sys  
+import serial
+import pyvisa
+import time
+import pandas as pd
+import numpy as np
+from PyQt5.QtWidgets import *
+from PyQt5 import QtCore
+from bitarray import bitarray
+
+
+# y_dir y_step x_dir x_step == 1100 format
+class Arduino:
+    def __init__(self):
+        super().__init__()
+        self.port = "COM4"
+        self.baudrate = 2000000
+        self.t = 0
+        self.Data = ''
+        self.amplitude = []
+        self.line_number = 0  # длина файла
+        self.pocket_length = 1024
+        self.send_pocket_length = 128 * 2  # % pocket_length == 0 !!!
+        self.out_lines = []
+        self.address_write = ''
+        self.zero_lines = 0
+        try:
+            # Open the COM port
+            self.arduino = serial.Serial(self.port, baudrate=self.baudrate, timeout=0.01)
+            print("Serial connection established.")
+
+        except serial.SerialException as se:
+            print("Serial port error:", str(se))
+
+        except KeyboardInterrupt:
+            pass
+
+        except:
+            # Close the serial connection
+            if self.arduino.is_open:
+                timer.stop()
+                self.arduino.close()
+                print("Serial connection closed.")
+
+    def delay(self):
+        timer2.start(1)
+        timer.start(1)
+
+    def send(self):
+        timer2.stop()
+        for i in range(self.send_pocket_length):
+            bts = bitarray(self.out_lines[self.line_number])
+            line = bts.tobytes()
+            # print(line)
+            self.arduino.write(line)
+            self.line_number += 1
+        if self.line_number % self.pocket_length == 0:
+            print('sending is completed')
+        else:
+            timer2.start(1)
+
+    def reading(self):
+        if self.arduino.in_waiting > 0:
+            data = str(self.arduino.readline().decode()).strip()
+            print(data)
+            if data != '':
+                self.t += float(data) / 1000000
+                try:
+                    amp = dmm.query('R?')
+                    n = int(amp[1])
+                    self.Data += ',' + amp[2 + n:-1]
+                except:
+                    print('Dmm reading error ', data)
+
+            if self.line_number != len(self.out_lines):
+                timer2.start(1)
+            else:
+                dmm.write('ABOR')
+                dmm.close()
+                self.arduino.close()
+                try:
+                    self.Data = self.Data[1:]
+                    self.Data = self.Data.split(',')
+                except:
+                    print('Split error', self.Data)
+                try:
+                    self.amplitude = list(map(float, self.Data))
+                    print('измерений:', len(self.amplitude))
+                except:
+                    print('Dmm reading error ', self.Data)
+                all_time = [0]
+                dt = self.t / (len(self.amplitude))
+                print('dt:', dt)
+                for i in range(1, len(self.amplitude)):
+                    all_time.append(i * dt)
+
+                df = pd.DataFrame({'time': all_time[:2 * (self.line_number - self.zero_lines)],
+                                   # убираем нулевые строки из файла
+                                    'amp': self.amplitude[:2 * (self.line_number - self.zero_lines)]
+                                   })
+
+                df.to_csv(self.address_write, sep='\t', index=False)
+                print('Success!')
+                app.exit()
+
+
+app = QApplication(sys.argv)
+ard = Arduino()
+
+# address_read = 'test.txt'
+# address_read = 'telephone_call-1-out_byte.txt'
+# address_read = 'watching_video-1-out_byte.txt'
+# address_read = 'racing_game-1_1-out_byte.txt'
+# address_read = 'VR-1_1-out_byte.txt' done
+
+
+address_write = address_read.replace(".txt", "") + '_out_data.txt'
+ard.address_write = address_write
+with open(address_read) as f:
+    lines = f.readlines() #[:2000] # опред кол-во строк
+if len(lines) % ard.pocket_length != 0:
+    zero_lines = ard.pocket_length - (len(lines) % ard.pocket_length)
+    print('add', zero_lines, 'lines')
+    lines += ['00000000'] * zero_lines
+    ard.zero_lines = zero_lines
+for i in range(0, len(lines)):
+    ard.out_lines.append(lines[i].strip())
+n_pockets = len(lines) // ard.pocket_length
+print('n_pockets =', n_pockets)
+timer = QtCore.QTimer()
+timer.timeout.connect(ard.reading)
+timer2 = QtCore.QTimer()
+timer2.timeout.connect(ard.send)
+timer3 = QtCore.QTimer()
+timer3.setSingleShot(True)
+timer3.timeout.connect(ard.delay)
+rm = pyvisa.ResourceManager()
+# time.sleep(1)
+print("Resources detected\n{}\n".format(rm.list_resources()))  # List all connected resources
+dmm = rm.open_resource('USB0::0x0957::0x0A07::MY53001937::INSTR')
+dmm.timeout = None
+Range = 10
+pmm = 1.5
+dmm_resolution = pmm*Range #0.06  # t_integral = 0.04ms
+dmm.write('ABOR')
+# dmm.write("SYSTem:*RST ")
+dmm.write('CONF:VOLTage:DC {},{}'.format(Range, dmm_resolution))
+dmm.write("SENS:VOLT:DC:NPLC 0.06")
+dmm.write("SENS:VOLT:ZERO:AUTO ONCE")
+
+res = 1  # число измерений сигнала на один шаг - 1 напряжение на шаг
+
+dmm.write('SAMP:COUNT 1')  # 2 измерения на 1 триг
+dmm.write('TRIG:SOUR EXT;SLOP POS; COUNT {}; DEL {}'.format(2 * res * ard.pocket_length * n_pockets, 0))
+# dmm.write('DISP ON')
+dmm.write('INIT')
+timer3.start(2000)
+sys.exit(app.exec_())
