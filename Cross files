@@ -1,0 +1,38 @@
+# поледовательно прибавлять дельту к концу первой колонки
+
+from decimal import Decimal
+
+with open('racing_game_out_byte_first_out_data.txt') as f:    
+    lines = f.readlines()
+    line0 = lines[0]
+    lis_base = lines[len(lines)-1].split()[0]
+    print(lis_base)
+    volts1=[]
+    lines = lines[1:]
+    for line in lines:
+        volts1.append(str(Decimal(line.split()[1])/1000))
+    print(volts1)
+
+with open('rac_game_new.txt') as f:   
+    lis = []
+    subtracted = []
+    lis1=[]
+    for line in f:         
+        spl = line.split()  
+        lis.append(spl[0]) 
+        lis1.append(str(Decimal(spl[1])/1000))
+    #print(lis)
+    subtracted.append(Decimal(lis[0]) + Decimal(lis_base))
+    for i in range(1, len(lis)):
+        subtracted.append(Decimal(lis[i]) + subtracted[i-1])
+
+with open('racing_game_out_data_added.txt', 'w') as f:
+    s = line0
+    f.write(s)
+    for line, volt in zip(lines, volts1):
+        s = line.split()[0] + " " + volt +'\n'
+        f.write(s)
+    for item, item1 in zip(subtracted, lis1):
+        s = str(item)+" "+item1+"\n"
+        f.write(s)
+    print('Done')
